@@ -32,6 +32,12 @@ class FileManager:
         with open(os.path.join(self.run_dir, "config.json"), "w") as f:
             json.dump(config, f, indent=4)
         print(f"✓ Configuration saved: {os.path.join(self.run_dir, "config.json")}")
+
+    def log_env_allocation(self, allocation: Dict[str, int]) -> None:
+        """Log environment allocation."""
+        with open(os.path.join(self.run_dir, "env_allocation.json"), "w") as f:
+            json.dump(allocation, f, indent=4)
+        print(f"✓ Environment allocation saved: {os.path.join(self.run_dir, "env_allocation.json")}")
     
     def dump_eval_to_csv(
         self,
@@ -39,7 +45,8 @@ class FileManager:
         stage: str,
         stage_step: int,
         batch: EpisodeBatch,
-        model: Any
+        model: Any,
+        allocation: Dict[str, int]
     ) -> None:
         """Append evaluation record to CSV file."""
         record = EvaluationRecord(
@@ -59,11 +66,17 @@ class FileManager:
             entropy_coef=float(model.ent_coef),
             learning_rate=float(model.learning_rate),
             clip_range=float(model.clip_range(1.0)),
-            mean_entropy=float(batch.mean_entropy)
+            mean_entropy=float(batch.mean_entropy),
+            allocation=allocation
         )
+
+        # Convert to dict and serialize allocation to JSON string
+        record_dict = asdict(record)
+        record_dict['allocation'] = json.dumps(allocation)
+        
         
         csv_path = os.path.join(self.run_dir, "evaluations.csv")
-        df = pd.DataFrame([asdict(record)])
+        df = pd.DataFrame([record_dict])
         
         # Append to existing CSV or create new one with header
         if os.path.exists(csv_path):

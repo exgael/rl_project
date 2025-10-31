@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Tuple, Dict
 import numpy as np
 
@@ -24,6 +24,7 @@ class EpisodeData:
     truncated: bool
     success: bool
     mean_entropy: float
+    actions: Tuple[int, ...]
     
     @property
     def done(self) -> bool:
@@ -116,3 +117,4 @@ class EvaluationRecord:
     learning_rate: float
     clip_range: float
     mean_entropy: float
+    allocation: Dict[str, int] = field(default_factory=dict)

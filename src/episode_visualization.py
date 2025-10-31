@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from stable_baselines3.common.base_class import BaseAlgorithm
+import re
 
 from src.environment import create_env
 from src.dataclass import EpisodeData, MINIGRID_ACTION_NAMES
@@ -24,36 +25,34 @@ def get_action_probs(model: BaseAlgorithm, obs: np.ndarray) -> Tuple[np.ndarray,
     
     return action_probs, predicted_action
 
-
 def visualize_eval_episode(
     model: BaseAlgorithm,
     episode: EpisodeData,
     timestep: int,
     output_dir: str,
 ) -> None:
-    """Visualize episode with environment frames and action probabilities."""
+    """Visualize episode using recorded trajectory (not replayed)."""
     env = create_env(episode.env_name, render_mode="rgb_array")
     obs, _ = env.reset(seed=episode.seed)
     
     frames: List[np.ndarray] = []
     action_probs_list: List[np.ndarray] = []
-    actions_taken: List[int] = []
-    done = False
     
-    while not done:
-        action_probs, predicted_action = get_action_probs(model, obs)
-        frame: np.ndarray = env.render() # type: ignore
+    # Use recorded actions, don't re-infer
+    for _, action in enumerate(episode.actions):
+        action_probs, _ = get_action_probs(model, obs)
+        frame: np.ndarray = env.render()  # type: ignore
         
         frames.append(frame)
         action_probs_list.append(action_probs)
-        actions_taken.append(predicted_action)
         
-        obs, reward, terminated, truncated, _ = env.step(predicted_action) # type: ignore
-        done = terminated or truncated
+        obs, reward, terminated, truncated, _ = env.step(action)  # type: ignore
+        if terminated or truncated:
+            break
     
     env.close()
     
-    # Determine number of frames to show (up to 8)
+    # Rest of visualization code...
     num_frames = min(len(frames), 8)
     if num_frames == 0:
         return
@@ -62,10 +61,9 @@ def visualize_eval_episode(
     
     status = "✓ Success" if episode.success else ("⊗ Truncated" if episode.truncated else "✗ Failed")
     
-    # Create grid with actual number of frames
-    fig = plt.figure(figsize=(3 * num_frames, 6), constrained_layout=True) # type: ignore
-    gs = fig.add_gridspec(2, num_frames) # type: ignore
-    fig.suptitle( # type: ignore
+    fig = plt.figure(figsize=(3 * num_frames, 6), constrained_layout=True)
+    gs = fig.add_gridspec(2, num_frames)
+    fig.suptitle(
         f"{episode.env_name} @ {timestep:,} steps | "
         f"Length: {episode.episode_length} | "
         f"Reward: {episode.total_reward:.1f} | "
@@ -79,31 +77,31 @@ def visualize_eval_episode(
         
         frame = frames[int(frame_idx)]
         action_probs = action_probs_list[int(frame_idx)]
-        action = actions_taken[int(frame_idx)]
+        action = episode.actions[int(frame_idx)]  # Use recorded action
         
-        # Environment frame
         ax_frame = fig.add_subplot(gs[0, col])
-        ax_frame.imshow(frame) # type: ignore
-        ax_frame.set_title(f"Step {frame_idx}", fontsize=9) # type: ignore
-        ax_frame.axis('off') # type: ignore
+        ax_frame.imshow(frame)
+        ax_frame.set_title(f"Step {frame_idx}", fontsize=9)
+        ax_frame.axis('off')
         
-        # Action probabilities
         ax_action = fig.add_subplot(gs[1, col])
         action_names = [MINIGRID_ACTION_NAMES[i] for i in range(len(action_probs))]
         colors = ['green' if i == action else 'steelblue' for i in range(len(action_probs))]
         
-        ax_action.barh(action_names, action_probs, color=colors) # type: ignore
-        ax_action.set_xlim(0, 1) 
-        ax_action.set_xlabel('Prob', fontsize=6) # type: ignore
-        ax_action.tick_params(axis='both', labelsize=5) # type: ignore
+        ax_action.barh(action_names, action_probs, color=colors)
+        ax_action.set_xlim(0, 1)
+        ax_action.set_xlabel('Prob', fontsize=6)
+        ax_action.tick_params(axis='both', labelsize=5)
         
         for i, prob in enumerate(action_probs):
             if prob > 0.05:
-                ax_action.text(prob + 0.02, i, f'{prob:.2f}', va='center', fontsize=5) # type: ignore
+                ax_action.text(prob + 0.02, i, f'{prob:.2f}', va='center', fontsize=5)
     
     os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, f"eval_{timestep}.png")
-    plt.savefig(output_path, dpi=100, bbox_inches='tight') # type: ignore
+    # Sanitize stage name for filename
+    stage_safe = re.sub(r'[^a-zA-Z0-9_-]', '', episode.env_name.replace('-', '_'))
+    output_path = os.path.join(output_dir, f"eval_{timestep}_{stage_safe}.png")
+    plt.savefig(output_path, dpi=100, bbox_inches='tight')
     plt.close()
     
     print(f"    → Saved visualization: {output_path}")

@@ -1,4 +1,4 @@
-from typing import Optional, Any, List
+from typing import Callable, Dict, Optional, Any, List, Tuple
 import numpy as np
 import gymnasium as gym
 import torch
@@ -21,14 +21,39 @@ def create_env(name: str, render_mode: Optional[str] = None) -> gym.Env[Any, Any
 def make_vec_env(name: str, n_envs: int = 8) -> SubprocVecEnv:
     """Create vectorized environment for parallel training."""
     # Fix: Use proper closure to avoid serialization issues
-    def _make_env_fn(env_name: str):
+    def _make_env_fn(env_name: str) -> Callable[[], gym.Env[Any, Any]]:
         """Closure factory to properly capture env_name."""
         def _init():
             return create_env(env_name)
         return _init
     
-    env_fns = [_make_env_fn(name) for _ in range(n_envs)]
+    env_fns: List[Callable[[], gym.Env[Any, Any]]] = [_make_env_fn(name) for _ in range(n_envs)]
     return SubprocVecEnv(env_fns)
+
+
+def make_fixed_mixed_vec_env(
+    allocation: Dict[str, int]
+) -> SubprocVecEnv:
+    """Create vectorized envs according to a fixed allocation"""
+    # Flatten allocation into list of stages e.g. ["S3R1","S3R1","S3R2",...]
+    env_assignments: List[str] = []
+    for stage, count in allocation.items():
+        env_assignments.extend([stage] * count)
+
+    # Safety: ensure ordering stability
+    stages = env_assignments
+
+    # Create env factories
+    def make_env_fn(stage: str) -> Callable[[], gym.Env[Any, Any]]:
+        def _init() -> gym.Env[Any, Any]:
+            return create_env(stage)
+        return _init
+
+    env_fns = [make_env_fn(stage) for stage in stages]
+
+    env = SubprocVecEnv(env_fns)
+
+    return env
 
 def run_episode(
     model: PPO,
@@ -50,10 +75,10 @@ def run_episode(
     terminated: bool = False
     truncated: bool = False
     entropies: List[float] = []
-    
+    actions: List[int] = []
     while not (terminated or truncated):
         action, _ = model.predict(obs, deterministic=deterministic)  # type: ignore
-        
+        action = int(action)  # ← Cast to int
         # Compute log prob variance for this state
         # MiniGrid ImgObsWrapper returns HWC format, transpose to CHW for PyTorch
    
@@ -71,6 +96,7 @@ def run_episode(
         obs, reward, terminated, truncated, _ = env.step(action)  # type: ignore
         total_reward += float(reward)
         steps += 1
+        actions.append(action)
     
     env.close()
     
@@ -84,5 +110,6 @@ def run_episode(
         terminated=terminated,
         truncated=truncated,
         success=terminated and total_reward > 0,
-        mean_entropy=mean_entropy
+        mean_entropy=mean_entropy,
+        actions=tuple(actions)
     )
